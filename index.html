@@ -111,6 +111,7 @@
   <button id="addBtn">+ Add card</button>
   <button class="ghost" id="exportBtn">Export</button>
   <button class="ghost" id="importBtn">Import</button>
+  <button class="ghost" id="curBtn" title="Toggle USD / IDR">$ USD</button>
   <input type="file" id="importFile" accept="application/json" style="display:none" />
 </header>
 
@@ -256,7 +257,27 @@ function load(){try{
 function save(){localStorage.setItem(LS,JSON.stringify(state))}
 function toast(m){const t=$("#toast");t.textContent=m;t.classList.add("show");
   clearTimeout(t._t);t._t=setTimeout(()=>t.classList.remove("show"),1800)}
-function money(n){return n==null?"—":"$"+Number(n).toFixed(2)}
+
+/* ---------- currency ---------- */
+let currency=localStorage.getItem("pkbinder.cur")||"USD";
+let usdToIdr=parseFloat(localStorage.getItem("pkbinder.rate"))||16500; // fallback rate
+async function fetchRate(){
+  try{
+    const r=await fetch("https://open.er-api.com/v6/latest/USD");
+    const j=await r.json();
+    if(j&&j.rates&&j.rates.IDR){usdToIdr=j.rates.IDR;localStorage.setItem("pkbinder.rate",usdToIdr);}
+  }catch(e){/* keep fallback */}
+  if(currency==="IDR")refreshAll(); // re-render with fresh rate
+}
+function money(n){
+  if(n==null)return "—";
+  n=Number(n);
+  if(currency==="IDR"){
+    const idr=Math.round(n*usdToIdr);
+    return "Rp"+idr.toLocaleString("id-ID");
+  }
+  return "$"+n.toFixed(2);
+}
 function locLabel(c){ // human-readable physical location
   if(!c.binder)return "";
   let s=c.binder;
@@ -280,7 +301,7 @@ function renderStats(){
   const sets=new Set(a.map(c=>c.setId)).size;
   $("#stats").innerHTML=[
     [total,"Total cards"],[unique,"Unique cards"],
-    ["$"+value.toFixed(2),"Est. value"],[sets,"Sets owned"]
+    [money(value),"Est. value"],[sets,"Sets owned"]
   ].map(([n,l])=>`<div class="stat"><div class="n">${n}</div><div class="l">${l}</div></div>`).join("");
 }
 function fillFilters(){
@@ -656,11 +677,18 @@ $("#dRemove").onclick=()=>{const d=$("#dSave")._data;delete state.cards[d.id];sa
 $("#loadSets").onclick=renderSets;$("#setSearch").oninput=()=>renderSets();
 $("#refreshReco").onclick=renderReco;
 $("#exportBtn").onclick=exportData;
+function updateCurBtn(){$("#curBtn").textContent=currency==="IDR"?"Rp IDR":"$ USD";}
+$("#curBtn").onclick=()=>{
+  currency=currency==="USD"?"IDR":"USD";
+  localStorage.setItem("pkbinder.cur",currency);
+  updateCurBtn();refreshAll();
+  if(currency==="IDR")toast("Rate: $1 ≈ Rp"+Math.round(usdToIdr).toLocaleString("id-ID"));
+};
 $("#importBtn").onclick=()=>$("#importFile").click();
 $("#importFile").onchange=e=>e.target.files[0]&&importData(e.target.files[0]);
 $$(".modal").forEach(m=>m.onclick=e=>{if(e.target===m)m.classList.remove("open")});
 
-load();refreshAll();
+load();updateCurBtn();refreshAll();fetchRate();
 </script>
 </body>
 </html>
