@@ -1,0 +1,562 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Pokémon Binder Tracker</title>
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+<style>
+  :root{
+    --bg:#0f1117; --panel:#171a23; --panel2:#1f2430; --line:#2a3040;
+    --txt:#e6e9ef; --muted:#9aa4b2; --accent:#ffcb05; --accent2:#3b6ef5;
+    --good:#2ecc71; --bad:#e74c3c; --chip:#232936;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
+    background:var(--bg);color:var(--txt);}
+  header{position:sticky;top:0;z-index:20;background:var(--panel);
+    border-bottom:1px solid var(--line);padding:12px 18px;display:flex;
+    align-items:center;gap:14px;flex-wrap:wrap;}
+  header h1{font-size:18px;margin:0;color:var(--accent);letter-spacing:.3px;}
+  header .spacer{flex:1}
+  .tabs{display:flex;gap:6px}
+  .tab{background:var(--chip);border:1px solid var(--line);color:var(--muted);
+    padding:7px 14px;border-radius:8px;cursor:pointer;font-size:13px;}
+  .tab.active{background:var(--accent2);color:#fff;border-color:var(--accent2)}
+  main{max-width:1200px;margin:0 auto;padding:18px;}
+  .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));
+    gap:12px;margin-bottom:18px;}
+  .stat{background:var(--panel);border:1px solid var(--line);border-radius:12px;
+    padding:14px;}
+  .stat .n{font-size:24px;font-weight:700}
+  .stat .l{font-size:12px;color:var(--muted);margin-top:4px}
+  .toolbar{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px;align-items:center}
+  input,select{background:var(--panel2);border:1px solid var(--line);color:var(--txt);
+    padding:9px 11px;border-radius:8px;font-size:14px;}
+  input:focus,select:focus{outline:1px solid var(--accent2)}
+  button{background:var(--accent2);border:none;color:#fff;padding:9px 14px;
+    border-radius:8px;cursor:pointer;font-size:14px;}
+  button.ghost{background:var(--chip);color:var(--txt);border:1px solid var(--line)}
+  button:disabled{opacity:.5;cursor:not-allowed}
+  .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;}
+  @media(min-width:720px){.grid{grid-template-columns:repeat(4,1fr)}}
+  @media(min-width:980px){.grid{grid-template-columns:repeat(6,1fr)}}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:10px;
+    overflow:hidden;position:relative;transition:transform .08s;}
+  .card:hover{transform:translateY(-2px);border-color:var(--accent2)}
+  .card img{width:100%;display:block;aspect-ratio:.72;object-fit:cover;background:var(--panel2)}
+  .card .meta{padding:8px}
+  .card .nm{font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .card .sub{font-size:11px;color:var(--muted);margin-top:2px}
+  .card .qty{position:absolute;top:6px;right:6px;background:var(--accent);color:#111;
+    font-size:11px;font-weight:700;padding:2px 7px;border-radius:20px}
+  .card .price{position:absolute;top:6px;left:6px;background:rgba(0,0,0,.6);
+    font-size:10px;padding:2px 6px;border-radius:6px}
+  .card .loc{position:absolute;bottom:34px;left:6px;right:6px;background:rgba(59,110,245,.92);
+    color:#fff;font-size:10px;font-weight:600;padding:3px 6px;border-radius:6px;text-align:center}
+  .empty{color:var(--muted);text-align:center;padding:60px 0;}
+  .modal{position:fixed;inset:0;background:rgba(0,0,0,.6);display:none;
+    align-items:center;justify-content:center;z-index:50;padding:16px}
+  .modal.open{display:flex}
+  .sheet{background:var(--panel);border:1px solid var(--line);border-radius:14px;
+    width:100%;max-width:560px;max-height:90vh;overflow:auto;padding:18px}
+  .sheet h3{margin:0 0 12px}
+  .row{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px}
+  .row>*{flex:1;min-width:120px}
+  .results{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:12px;max-height:360px;overflow:auto}
+  .results .card{cursor:pointer}
+  label{font-size:12px;color:var(--muted);display:block;margin-bottom:4px}
+  .pill{background:var(--chip);border:1px solid var(--line);padding:4px 10px;border-radius:20px;font-size:12px;cursor:pointer}
+  .pill.on{background:var(--accent);color:#111;border-color:var(--accent)}
+  .close{position:absolute}
+  .detail{display:flex;gap:14px;flex-wrap:wrap}
+  .detail img{width:160px;border-radius:10px}
+  .reco-card{display:flex;gap:12px;background:var(--panel);border:1px solid var(--line);
+    border-radius:12px;padding:12px;margin-bottom:10px;align-items:center}
+  .reco-card img{width:70px;border-radius:8px}
+  .reco-why{font-size:12px;color:var(--muted);margin-top:4px}
+  .bar{height:7px;background:var(--panel2);border-radius:20px;overflow:hidden;margin-top:6px}
+  .bar>span{display:block;height:100%;background:var(--good)}
+  .muted{color:var(--muted);font-size:13px}
+  .danger{background:var(--bad)}
+  .set-row{display:flex;justify-content:space-between;align-items:center;
+    background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;margin-bottom:8px}
+  .toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);
+    background:var(--accent2);color:#fff;padding:10px 18px;border-radius:10px;z-index:60;
+    opacity:0;transition:opacity .2s;pointer-events:none}
+  .toast.show{opacity:1}
+  .spin{display:inline-block;width:14px;height:14px;border:2px solid #fff5;
+    border-top-color:#fff;border-radius:50%;animation:s .7s linear infinite;vertical-align:-2px}
+  @keyframes s{to{transform:rotate(360deg)}}
+</style>
+</head>
+<body>
+<header>
+  <h1>⚡ Pokémon Binder</h1>
+  <div class="tabs">
+    <div class="tab active" data-tab="binder">Binder</div>
+    <div class="tab" data-tab="sets">Set Completion</div>
+    <div class="tab" data-tab="reco">Recommendations</div>
+  </div>
+  <div class="spacer"></div>
+  <button id="scanBtn">📷 Scan card</button>
+  <button id="addBtn">+ Add card</button>
+  <button class="ghost" id="exportBtn">Export</button>
+  <button class="ghost" id="importBtn">Import</button>
+  <input type="file" id="importFile" accept="application/json" style="display:none" />
+</header>
+
+<main>
+  <div class="stats" id="stats"></div>
+
+  <!-- BINDER TAB -->
+  <section id="tab-binder">
+    <div class="toolbar">
+      <input id="search" placeholder="🔍 Search cards — tells you which binder & page…" style="min-width:260px" />
+      <select id="filterBinder"><option value="">All binders</option></select>
+      <select id="filterSet"><option value="">All sets</option></select>
+      <select id="filterRarity"><option value="">All rarities</option></select>
+      <select id="sortBy">
+        <option value="added">Sort: recently added</option>
+        <option value="name">Sort: name</option>
+        <option value="value">Sort: value (high→low)</option>
+        <option value="number">Sort: card number</option>
+        <option value="binder">Sort: binder &amp; page</option>
+      </select>
+      <button class="ghost" id="manageBinders">Rename binders</button>
+    </div>
+    <div class="grid" id="binderGrid"></div>
+    <div class="empty" id="binderEmpty" style="display:none">
+      Your binder is empty. Click <b>+ Add card</b> to search the Pokémon TCG and start your collection.
+    </div>
+  </section>
+
+  <!-- SETS TAB -->
+  <section id="tab-sets" style="display:none">
+    <div class="toolbar">
+      <input id="setSearch" placeholder="Find a set to track completion…" style="min-width:260px" />
+      <button class="ghost" id="loadSets">Load set list</button>
+    </div>
+    <div id="setList" class="muted">Click “Load set list” to see completion progress for every set you own cards from.</div>
+  </section>
+
+  <!-- RECO TAB -->
+  <section id="tab-reco" style="display:none">
+    <div class="toolbar">
+      <span class="muted">Suggestions based on your collection — sets you're close to finishing, cards you own duplicates of, and popular cards you're missing.</span>
+      <div class="spacer"></div>
+      <button id="refreshReco">Refresh</button>
+    </div>
+    <div id="recoList"></div>
+  </section>
+</main>
+
+<!-- ADD / SEARCH MODAL -->
+<div class="modal" id="addModal">
+  <div class="sheet" style="max-width:620px">
+    <h3>Add cards from the Pokémon TCG</h3>
+    <div class="row">
+      <input id="apiSearch" placeholder="e.g. Charizard, Pikachu ex…" style="flex:3" />
+      <button id="doSearch" style="flex:1">Search</button>
+    </div>
+    <div class="muted" id="searchHint">Type a card name and hit Search. Click a result to add it to your binder.</div>
+    <div class="results" id="apiResults"></div>
+    <div class="row" style="margin-top:14px;justify-content:flex-end">
+      <button class="ghost" id="closeAdd" style="flex:0;min-width:90px">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- SCAN / OCR MODAL -->
+<div class="modal" id="scanModal">
+  <div class="sheet" style="max-width:620px">
+    <h3>📷 Scan a card</h3>
+    <div class="muted" id="scanHint">Take a photo of the card (or choose one). I'll read the name and search the Pokémon TCG for it. Fill the card's top name area for best results.</div>
+    <div class="row" style="margin-top:12px">
+      <input type="file" id="scanFile" accept="image/*" capture="environment" style="flex:3" />
+    </div>
+    <div class="row"><img id="scanPreview" src="" alt="" style="max-width:160px;border-radius:10px;display:none"/></div>
+    <div class="muted" id="scanStatus"></div>
+    <div class="results" id="scanResults"></div>
+    <div class="row" style="margin-top:14px;justify-content:flex-end">
+      <button class="ghost" id="closeScan" style="flex:0;min-width:90px">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- CARD DETAIL MODAL -->
+<div class="modal" id="detailModal">
+  <div class="sheet">
+    <h3 id="dTitle"></h3>
+    <div class="detail">
+      <img id="dImg" src="" alt="" />
+      <div style="flex:1;min-width:200px">
+        <div class="row"><div><label>Set</label><div id="dSet" class="muted"></div></div>
+          <div><label>Number</label><div id="dNum" class="muted"></div></div></div>
+        <div class="row"><div><label>Rarity</label><div id="dRarity" class="muted"></div></div>
+          <div><label>Market price</label><div id="dPrice" class="muted"></div></div></div>
+        <label>Quantity</label>
+        <div class="row"><input id="dQty" type="number" min="0" value="1" /></div>
+        <label>Condition</label>
+        <select id="dCond"><option>NM</option><option>LP</option><option>MP</option><option>HP</option><option>DMG</option></select>
+        <label style="margin-top:10px">Which binder is it in?</label>
+        <select id="dBinder"></select>
+        <div class="row" style="margin-top:8px">
+          <div><label>Page</label><input id="dPage" type="number" min="1" placeholder="e.g. 4" /></div>
+          <div><label>Slot (1–9)</label><input id="dSlot" type="number" min="1" max="9" placeholder="e.g. 7" /></div>
+        </div>
+      </div>
+    </div>
+    <div class="row" style="margin-top:14px;justify-content:space-between">
+      <button class="danger" id="dRemove" style="flex:0;min-width:120px">Remove card</button>
+      <button id="dSave" style="flex:0;min-width:120px">Save</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const API="https://api.pokemontcg.io/v2";
+const LS="pkbinder.v1";
+// card -> {id,name,set,setId,number,rarity,image,price,qty,cond,added, binder,page,slot}
+let state={cards:{},binders:["Binder 1","Binder 2","Binder 3","Binder 4"]};
+let pendingAdd=null;             // card being added from search
+const $=s=>document.querySelector(s);
+const $$=s=>[...document.querySelectorAll(s)];
+
+function load(){try{
+  state=JSON.parse(localStorage.getItem(LS))||{};
+}catch(e){state={}}
+  if(!state.cards)state.cards={};
+  if(!Array.isArray(state.binders)||!state.binders.length)
+    state.binders=["Binder 1","Binder 2","Binder 3","Binder 4"];
+}
+function save(){localStorage.setItem(LS,JSON.stringify(state))}
+function toast(m){const t=$("#toast");t.textContent=m;t.classList.add("show");
+  clearTimeout(t._t);t._t=setTimeout(()=>t.classList.remove("show"),1800)}
+function money(n){return n==null?"—":"$"+Number(n).toFixed(2)}
+function locLabel(c){ // human-readable physical location
+  if(!c.binder)return "";
+  let s=c.binder;
+  if(c.page)s+=" · pg "+c.page;
+  if(c.slot)s+=" · slot "+c.slot;
+  return s;
+}
+function priceOf(c){ // extract a market price from tcgplayer data
+  const p=c.tcgplayer&&c.tcgplayer.prices;if(!p)return null;
+  for(const k of["holofoil","reverseHolofoil","normal","1stEditionHolofoil"])
+    if(p[k]&&p[k].market!=null)return p[k].market;
+  for(const k in p)if(p[k].market!=null)return p[k].market;return null;}
+
+/* ---------- rendering ---------- */
+function cardsArr(){return Object.values(state.cards)}
+function renderStats(){
+  const a=cardsArr();
+  const total=a.reduce((s,c)=>s+(c.qty||0),0);
+  const unique=a.length;
+  const value=a.reduce((s,c)=>s+((c.price||0)*(c.qty||0)),0);
+  const sets=new Set(a.map(c=>c.setId)).size;
+  $("#stats").innerHTML=[
+    [total,"Total cards"],[unique,"Unique cards"],
+    ["$"+value.toFixed(2),"Est. value"],[sets,"Sets owned"]
+  ].map(([n,l])=>`<div class="stat"><div class="n">${n}</div><div class="l">${l}</div></div>`).join("");
+}
+function fillFilters(){
+  const a=cardsArr();
+  const sets=[...new Set(a.map(c=>c.set))].sort();
+  const rar=[...new Set(a.map(c=>c.rarity).filter(Boolean))].sort();
+  $("#filterSet").innerHTML='<option value="">All sets</option>'+sets.map(s=>`<option>${s}</option>`).join("");
+  $("#filterRarity").innerHTML='<option value="">All rarities</option>'+rar.map(s=>`<option>${s}</option>`).join("");
+  $("#filterBinder").innerHTML='<option value="">All binders</option>'+state.binders.map(b=>`<option>${b}</option>`).join("");
+}
+function fillBinderSelect(sel,current){
+  sel.innerHTML='<option value="">— not filed —</option>'+
+    state.binders.map(b=>`<option${b===current?" selected":""}>${b}</option>`).join("");
+}
+function renderBinder(){
+  let a=cardsArr();
+  const q=$("#search").value.toLowerCase().trim();
+  const fs=$("#filterSet").value, fr=$("#filterRarity").value, fb=$("#filterBinder").value, sort=$("#sortBy").value;
+  if(q)a=a.filter(c=>c.name.toLowerCase().includes(q)||(c.set||"").toLowerCase().includes(q));
+  if(fs)a=a.filter(c=>c.set===fs);
+  if(fr)a=a.filter(c=>c.rarity===fr);
+  if(fb)a=a.filter(c=>c.binder===fb);
+  a.sort((x,y)=>{
+    if(sort==="name")return x.name.localeCompare(y.name);
+    if(sort==="value")return (y.price||0)-(x.price||0);
+    if(sort==="number")return (parseInt(x.number)||0)-(parseInt(y.number)||0);
+    if(sort==="binder")return (x.binder||"~").localeCompare(y.binder||"~")
+      ||(parseInt(x.page)||999)-(parseInt(y.page)||999)
+      ||(parseInt(x.slot)||999)-(parseInt(y.slot)||999);
+    return (y.added||0)-(x.added||0);
+  });
+  const g=$("#binderGrid");
+  g.innerHTML=a.map(c=>{
+    const loc=locLabel(c);
+    return `
+    <div class="card" data-id="${c.id}">
+      <span class="qty">×${c.qty}</span>
+      ${c.price?`<span class="price">${money(c.price)}</span>`:""}
+      <img loading="lazy" src="${c.image}" alt="${c.name}" onerror="this.style.visibility='hidden'"/>
+      ${loc?`<span class="loc">📍 ${loc}</span>`:""}
+      <div class="meta"><div class="nm">${c.name}</div>
+        <div class="sub">${c.set} · ${c.number||"?"} · ${c.rarity||""}</div></div>
+    </div>`;}).join("");
+  $("#binderEmpty").style.display=cardsArr().length?"none":"block";
+}
+function refreshAll(){renderStats();fillFilters();renderBinder();}
+
+/* ---------- add / search API ---------- */
+async function apiSearch(name){
+  const r=await fetch(`${API}/cards?q=name:"${encodeURIComponent(name)}*"&pageSize=24&orderBy=-set.releaseDate`);
+  if(!r.ok)throw new Error("API "+r.status);
+  return (await r.json()).data||[];
+}
+async function doSearch(){
+  const name=$("#apiSearch").value.trim();if(!name)return;
+  $("#apiResults").innerHTML="";$("#searchHint").innerHTML='Searching <span class="spin"></span>';
+  try{
+    const data=await apiSearch(name);
+    $("#searchHint").textContent=data.length?`${data.length} results — click to add`:"No results.";
+    $("#apiResults").innerHTML=data.map(c=>{
+      const img=(c.images&&c.images.small)||"";
+      return `<div class="card" data-add='${encodeURIComponent(JSON.stringify({
+        id:c.id,name:c.name,set:c.set.name,setId:c.set.id,number:c.number,
+        rarity:c.rarity||"",image:(c.images&&c.images.large)||img,price:priceOf(c)}))}'>
+        <img loading="lazy" src="${img}" onerror="this.style.visibility='hidden'"/>
+        <div class="meta"><div class="nm">${c.name}</div>
+        <div class="sub">${c.set.name} · ${c.number}</div></div></div>`;
+    }).join("");
+  }catch(e){$("#searchHint").textContent="Search failed: "+e.message;}
+}
+
+/* ---------- detail / edit ---------- */
+function openDetail(data,isNew){
+  pendingAdd=isNew?data:null;
+  $("#dTitle").textContent=data.name;
+  $("#dImg").src=data.image||"";
+  $("#dSet").textContent=data.set;$("#dNum").textContent=data.number||"—";
+  $("#dRarity").textContent=data.rarity||"—";$("#dPrice").textContent=money(data.price);
+  const existing=state.cards[data.id];
+  $("#dQty").value=existing?existing.qty:1;
+  $("#dCond").value=existing?existing.cond:"NM";
+  fillBinderSelect($("#dBinder"),existing?existing.binder:"");
+  $("#dPage").value=existing&&existing.page?existing.page:"";
+  $("#dSlot").value=existing&&existing.slot?existing.slot:"";
+  $("#dRemove").style.display=existing?"block":"none";
+  $("#detailModal").classList.add("open");
+  $("#dSave")._data=data;
+}
+function saveDetail(){
+  const data=$("#dSave")._data;const qty=Math.max(0,parseInt($("#dQty").value)||0);
+  if(qty===0){delete state.cards[data.id];toast("Removed");}
+  else{
+    state.cards[data.id]={...data,qty,cond:$("#dCond").value,
+      binder:$("#dBinder").value||"",
+      page:$("#dPage").value?parseInt($("#dPage").value):"",
+      slot:$("#dSlot").value?parseInt($("#dSlot").value):"",
+      added:state.cards[data.id]?state.cards[data.id].added:Date.now()};
+    toast("Saved");
+  }
+  save();refreshAll();$("#detailModal").classList.remove("open");$("#addModal").classList.remove("open");$("#scanModal").classList.remove("open");
+}
+
+/* ---------- set completion ---------- */
+const setCountCache={};
+async function setTotal(setId){
+  if(setCountCache[setId]!=null)return setCountCache[setId];
+  const r=await fetch(`${API}/sets/${setId}`);const j=await r.json();
+  return setCountCache[setId]=(j.data&&j.data.total)||0;
+}
+async function renderSets(){
+  const a=cardsArr();
+  const bySet={};
+  a.forEach(c=>{(bySet[c.setId]=bySet[c.setId]||{name:c.set,owned:new Set()}).owned.add(c.id)});
+  const ids=Object.keys(bySet);
+  if(!ids.length){$("#setList").textContent="Add some cards first — set completion is based on what you own.";return;}
+  $("#setList").innerHTML='Loading set sizes <span class="spin"></span>';
+  const rows=[];
+  for(const id of ids){
+    const tot=await setTotal(id).catch(()=>0);
+    const own=bySet[id].owned.size;const pct=tot?Math.round(own/tot*100):0;
+    rows.push({name:bySet[id].name,own,tot,pct});
+  }
+  rows.sort((x,y)=>y.pct-x.pct);
+  const q=$("#setSearch").value.toLowerCase();
+  $("#setList").innerHTML=rows.filter(r=>r.name.toLowerCase().includes(q)).map(r=>`
+    <div class="set-row"><div style="flex:1">
+      <b>${r.name}</b> <span class="muted">${r.own}/${r.tot||"?"} cards</span>
+      <div class="bar"><span style="width:${r.pct}%"></span></div>
+    </div><div style="font-size:20px;font-weight:700;margin-left:14px">${r.pct}%</div></div>`).join("")
+    ||'<span class="muted">No matching set.</span>';
+}
+
+/* ---------- recommendations ---------- */
+async function renderReco(){
+  const a=cardsArr();const list=$("#recoList");
+  if(!a.length){list.innerHTML='<span class="muted">Add cards first and I\'ll suggest what to chase next.</span>';return;}
+  list.innerHTML='Thinking <span class="spin"></span>';
+  const recos=[];
+
+  // 1) Sets you're closest to completing -> suggest finishing them
+  const bySet={};
+  a.forEach(c=>{(bySet[c.setId]=bySet[c.setId]||{name:c.set,owned:new Set()}).owned.add(c.id)});
+  const setStats=[];
+  for(const id of Object.keys(bySet)){
+    const tot=await setTotal(id).catch(()=>0);
+    if(!tot)continue;const own=bySet[id].owned.size;const pct=own/tot;
+    if(pct>=0.4&&pct<1)setStats.push({id,name:bySet[id].name,own,tot,pct});
+  }
+  setStats.sort((x,y)=>y.pct-x.pct);
+  // find a specific missing card in the top near-complete set
+  for(const s of setStats.slice(0,2)){
+    try{
+      const r=await fetch(`${API}/cards?q=set.id:${s.id}&pageSize=250&orderBy=number`);
+      const data=(await r.json()).data||[];
+      const missing=data.filter(c=>!state.cards[c.id]);
+      if(missing.length){
+        const pick=missing.sort((x,y)=>(priceOf(y)||0)-(priceOf(x)||0))[0]; // the chase card
+        recos.push({img:(pick.images&&pick.images.small)||"",title:pick.name,
+          why:`Finish <b>${s.name}</b> — you have ${s.own}/${s.tot} (${Math.round(s.pct*100)}%). ${missing.length} cards left; this is the priciest one still missing (${money(priceOf(pick))}).`});
+      }
+    }catch(e){}
+  }
+
+  // 2) Favorite Pokémon (by how many you own) -> suggest a newer card of it
+  const byName={};a.forEach(c=>byName[c.name.split(" ")[0]]=(byName[c.name.split(" ")[0]]||0)+c.qty);
+  const fav=Object.entries(byName).sort((x,y)=>y[1]-x[1])[0];
+  if(fav){
+    try{
+      const r=await fetch(`${API}/cards?q=name:"${encodeURIComponent(fav[0])}*"&orderBy=-set.releaseDate&pageSize=20`);
+      const data=(await r.json()).data||[];
+      const pick=data.find(c=>!state.cards[c.id]);
+      if(pick)recos.push({img:(pick.images&&pick.images.small)||"",title:pick.name,
+        why:`You collect <b>${fav[0]}</b> (${fav[1]} in your binder). This is a recent ${fav[0]} card you don't have yet.`});
+    }catch(e){}
+  }
+
+  // 3) Highest-value card you own -> suggest a comparable grail
+  const top=[...a].sort((x,y)=>(y.price||0)-(x.price||0))[0];
+  if(top&&top.price)recos.push({img:top.image,title:top.name,
+    why:`Your most valuable card (${money(top.price)}). Consider protecting/grading it, or chasing an alt-art of it.`});
+
+  list.innerHTML=recos.length?recos.map(r=>`
+    <div class="reco-card"><img src="${r.img}" onerror="this.style.visibility='hidden'"/>
+    <div><b>${r.title}</b><div class="reco-why">${r.why}</div></div></div>`).join("")
+    :'<span class="muted">No strong suggestions yet — add more cards or complete more of a set.</span>';
+}
+
+/* ---------- OCR scan ---------- */
+function cleanOcr(text){
+  // keep the longest plausible name-ish line (letters, 2+ chars)
+  const lines=text.split(/\n+/).map(l=>l.replace(/[^A-Za-z' .\-]/g,"").trim())
+    .filter(l=>l.length>=3);
+  // prefer a line near the top with letters; fall back to longest
+  lines.sort((a,b)=>b.length-a.length);
+  return (lines[0]||"").replace(/\b(HP|BASIC|STAGE|STAGE1|STAGE2|EX|GX)\b/gi,"").trim();
+}
+async function runScan(file){
+  if(typeof Tesseract==="undefined"){
+    $("#scanStatus").textContent="OCR library didn't load — check your internet connection and reopen.";return;}
+  const url=URL.createObjectURL(file);
+  const pv=$("#scanPreview");pv.src=url;pv.style.display="block";
+  $("#scanResults").innerHTML="";
+  $("#scanStatus").innerHTML='Reading card <span class="spin"></span> (first scan downloads the OCR model, ~15s)';
+  try{
+    const {data}=await Tesseract.recognize(url,"eng");
+    const guess=cleanOcr(data.text||"");
+    if(!guess){$("#scanStatus").textContent="Couldn't read a name. Try a clearer, straight-on photo of the card's top.";return;}
+    $("#scanStatus").innerHTML=`Read: <b>${guess}</b> — searching the TCG <span class="spin"></span>`;
+    const results=await apiSearch(guess);
+    if(!results.length){
+      $("#scanStatus").innerHTML=`Read "<b>${guess}</b>" but no TCG match. <a href="#" id="scanManual" style="color:var(--accent2)">Search manually</a>`;
+      $("#scanManual").onclick=ev=>{ev.preventDefault();$("#scanModal").classList.remove("open");
+        $("#addModal").classList.add("open");$("#apiSearch").value=guess;doSearch();};
+      return;
+    }
+    $("#scanStatus").innerHTML=`Read "<b>${guess}</b>" — ${results.length} matches, pick the right one:`;
+    $("#scanResults").innerHTML=results.map(c=>{
+      const img=(c.images&&c.images.small)||"";
+      return `<div class="card" data-add='${encodeURIComponent(JSON.stringify({
+        id:c.id,name:c.name,set:c.set.name,setId:c.set.id,number:c.number,
+        rarity:c.rarity||"",image:(c.images&&c.images.large)||img,price:priceOf(c)}))}'>
+        <img loading="lazy" src="${img}" onerror="this.style.visibility='hidden'"/>
+        <div class="meta"><div class="nm">${c.name}</div>
+        <div class="sub">${c.set.name} · ${c.number}</div></div></div>`;
+    }).join("");
+  }catch(e){$("#scanStatus").textContent="Scan failed: "+e.message;}
+  finally{URL.revokeObjectURL(url);}
+}
+
+/* ---------- rename binders ---------- */
+function renameBinders(){
+  const next=[];
+  for(let i=0;i<state.binders.length;i++){
+    const v=prompt("Name for binder "+(i+1)+":",state.binders[i]);
+    if(v===null)return; // cancelled
+    next.push(v.trim()||state.binders[i]);
+  }
+  const old=state.binders;
+  // remap any cards filed under an old name
+  Object.values(state.cards).forEach(c=>{
+    const idx=old.indexOf(c.binder);if(idx>=0)c.binder=next[idx];
+  });
+  state.binders=next;save();refreshAll();toast("Binders renamed");
+}
+
+/* ---------- import / export ---------- */
+function exportData(){
+  const blob=new Blob([JSON.stringify(state,null,2)],{type:"application/json"});
+  const u=URL.createObjectURL(blob);const a=document.createElement("a");
+  a.href=u;a.download="pokemon-binder-"+new Date().toISOString().slice(0,10)+".json";a.click();
+  URL.revokeObjectURL(u);toast("Exported");
+}
+function importData(file){
+  const r=new FileReader();r.onload=()=>{try{
+    const d=JSON.parse(r.result);if(d&&d.cards){
+      state={cards:d.cards,binders:(Array.isArray(d.binders)&&d.binders.length)?d.binders:state.binders};
+      save();refreshAll();toast("Imported "+Object.keys(d.cards).length+" cards");}
+    else toast("Not a valid backup");
+  }catch(e){toast("Import failed")}};r.readAsText(file);
+}
+
+/* ---------- wiring ---------- */
+$$(".tab").forEach(t=>t.onclick=()=>{
+  $$(".tab").forEach(x=>x.classList.remove("active"));t.classList.add("active");
+  ["binder","sets","reco"].forEach(id=>$("#tab-"+id).style.display="none");
+  $("#tab-"+t.dataset.tab).style.display="block";
+  if(t.dataset.tab==="reco")renderReco();
+});
+$("#addBtn").onclick=()=>{$("#addModal").classList.add("open");$("#apiSearch").focus();};
+$("#scanBtn").onclick=()=>{$("#scanModal").classList.add("open");
+  $("#scanResults").innerHTML="";$("#scanStatus").textContent="";
+  $("#scanPreview").style.display="none";$("#scanFile").value="";};
+$("#closeScan").onclick=()=>$("#scanModal").classList.remove("open");
+$("#scanFile").onchange=e=>e.target.files[0]&&runScan(e.target.files[0]);
+$("#scanResults").onclick=e=>{const el=e.target.closest("[data-add]");if(!el)return;
+  openDetail(JSON.parse(decodeURIComponent(el.dataset.add)),true);};
+$("#manageBinders").onclick=renameBinders;
+$("#closeAdd").onclick=()=>$("#addModal").classList.remove("open");
+$("#doSearch").onclick=doSearch;
+$("#apiSearch").onkeydown=e=>{if(e.key==="Enter")doSearch();};
+$("#apiResults").onclick=e=>{const el=e.target.closest("[data-add]");if(!el)return;
+  openDetail(JSON.parse(decodeURIComponent(el.dataset.add)),true);};
+$("#binderGrid").onclick=e=>{const el=e.target.closest("[data-id]");if(!el)return;
+  openDetail(state.cards[el.dataset.id],false);};
+$("#dSave").onclick=saveDetail;
+$("#dRemove").onclick=()=>{const d=$("#dSave")._data;delete state.cards[d.id];save();refreshAll();
+  $("#detailModal").classList.remove("open");toast("Removed");};
+["#search","#filterSet","#filterRarity","#filterBinder","#sortBy"].forEach(s=>{
+  const el=$(s);el.oninput=renderBinder;el.onchange=renderBinder;});
+$("#loadSets").onclick=renderSets;$("#setSearch").oninput=()=>renderSets();
+$("#refreshReco").onclick=renderReco;
+$("#exportBtn").onclick=exportData;
+$("#importBtn").onclick=()=>$("#importFile").click();
+$("#importFile").onchange=e=>e.target.files[0]&&importData(e.target.files[0]);
+$$(".modal").forEach(m=>m.onclick=e=>{if(e.target===m)m.classList.remove("open")});
+
+load();refreshAll();
+</script>
+</body>
+</html>
