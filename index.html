@@ -165,10 +165,15 @@
   <div class="sheet" style="max-width:620px">
     <h3>Add cards from the Pokémon TCG</h3>
     <div class="row">
-      <input id="apiSearch" placeholder="e.g. Charizard, Pikachu ex…" style="flex:3" />
+      <input id="apiSearch" placeholder="Card name — e.g. Charizard, Pikachu ex…" style="flex:3" />
       <button id="doSearch" style="flex:1">Search</button>
     </div>
-    <div class="muted" id="searchHint">Type a card name and hit Search. Click a result to add it to your binder.</div>
+    <div class="row">
+      <input id="apiSet" list="setOptions" placeholder="Set (optional) — e.g. Base, Obsidian Flames…" style="flex:3" />
+      <datalist id="setOptions"></datalist>
+      <button class="ghost" id="clearSet" style="flex:1">Clear set</button>
+    </div>
+    <div class="muted" id="searchHint">Type a card name (optionally pick a set to narrow it) and hit Search. Click a result to add it to your binder.</div>
     <div class="results" id="apiResults"></div>
     <div class="row" style="margin-top:14px;justify-content:flex-end">
       <button class="ghost" id="closeAdd" style="flex:0;min-width:90px">Close</button>
@@ -269,6 +274,23 @@ async function fetchRate(){
   }catch(e){/* keep fallback */}
   if(currency==="IDR")refreshAll(); // re-render with fresh rate
 }
+
+/* ---------- set name autocomplete ---------- */
+async function loadSetOptions(){
+  if($("#setOptions").children.length)return; // already filled this session
+  // use cache if present
+  let names=[];
+  try{names=JSON.parse(localStorage.getItem("pkbinder.sets")||"[]");}catch(e){}
+  if(!names.length){
+    try{
+      const r=await fetch(`${API}/sets?pageSize=250&orderBy=-releaseDate&select=name`);
+      const j=await r.json();
+      names=[...new Set((j.data||[]).map(s=>s.name))];
+      if(names.length)localStorage.setItem("pkbinder.sets",JSON.stringify(names));
+    }catch(e){return;}
+  }
+  $("#setOptions").innerHTML=names.map(n=>`<option value="${n.replace(/"/g,'&quot;')}">`).join("");
+}
 function money(n){
   if(n==null)return "—";
   n=Number(n);
@@ -350,9 +372,13 @@ function renderBinder(){
 function refreshAll(){renderStats();fillFilters();renderBinder();}
 
 /* ---------- add / search API ---------- */
-async function apiSearch(name){
+async function apiSearch(name,setName){
   // retry on transient 5xx / network errors — the TCG API 500s intermittently
-  const u=`${API}/cards?q=name:"${encodeURIComponent(name)}*"&pageSize=24&orderBy=-set.releaseDate`;
+  const parts=[];
+  if(name&&name.trim())parts.push(`name:"${name.trim()}*"`);
+  if(setName&&setName.trim())parts.push(`set.name:"${setName.trim()}*"`);
+  if(!parts.length)return [];
+  const u=`${API}/cards?q=${encodeURIComponent(parts.join(" "))}&pageSize=48&orderBy=-set.releaseDate`;
   let lastErr;
   for(let attempt=0;attempt<4;attempt++){
     if(attempt)await new Promise(r=>setTimeout(r,400*attempt)); // 0, 400, 800, 1200ms
@@ -366,10 +392,12 @@ async function apiSearch(name){
   throw lastErr||new Error("API request failed");
 }
 async function doSearch(){
-  const name=$("#apiSearch").value.trim();if(!name)return;
+  const name=$("#apiSearch").value.trim();
+  const setName=$("#apiSet").value.trim();
+  if(!name&&!setName){$("#searchHint").textContent="Type a card name, a set, or both.";return;}
   $("#apiResults").innerHTML="";$("#searchHint").innerHTML='Searching <span class="spin"></span>';
   try{
-    const data=await apiSearch(name);
+    const data=await apiSearch(name,setName);
     $("#searchHint").textContent=data.length?`${data.length} results — click to add`:"No results.";
     $("#apiResults").innerHTML=data.map(c=>{
       const img=(c.images&&c.images.small)||"";
@@ -645,7 +673,7 @@ $$(".tab").forEach(t=>t.onclick=()=>{
   $("#tab-"+t.dataset.tab).style.display="block";
   if(t.dataset.tab==="reco")renderReco();
 });
-$("#addBtn").onclick=()=>{$("#addModal").classList.add("open");$("#apiSearch").focus();};
+$("#addBtn").onclick=()=>{$("#addModal").classList.add("open");$("#apiSearch").focus();loadSetOptions();};
 $("#scanBtn").onclick=()=>{$("#scanModal").classList.add("open");
   scanItems=[];$("#scanReview").innerHTML="";$("#scanStatus").textContent="";
   $("#scanBulk").style.display="none";$("#scanFile").value="";};
@@ -659,6 +687,8 @@ $("#manageBinders").onclick=renameBinders;
 $("#closeAdd").onclick=()=>$("#addModal").classList.remove("open");
 $("#doSearch").onclick=doSearch;
 $("#apiSearch").onkeydown=e=>{if(e.key==="Enter")doSearch();};
+$("#apiSet").onkeydown=e=>{if(e.key==="Enter")doSearch();};
+$("#clearSet").onclick=()=>{$("#apiSet").value="";$("#apiSearch").focus();};
 $("#apiResults").onclick=e=>{const el=e.target.closest("[data-add]");if(!el)return;
   openDetail(JSON.parse(decodeURIComponent(el.dataset.add)),true);};
 $("#binderGrid").onclick=e=>{const el=e.target.closest("[data-id]");if(!el)return;
