@@ -74,6 +74,14 @@
   .reco-card{display:flex;gap:12px;background:var(--panel);border:1px solid var(--line);
     border-radius:12px;padding:12px;margin-bottom:10px;align-items:center}
   .reco-card img{width:70px;border-radius:8px}
+  .rev-row{display:flex;gap:10px;align-items:center;background:var(--panel);
+    border:1px solid var(--line);border-radius:10px;padding:8px;margin-bottom:8px}
+  .rev-row img{width:46px;border-radius:6px;background:var(--panel2)}
+  .rev-row .nm{font-size:13px;font-weight:600}
+  .rev-row .st{font-size:11px;color:var(--muted)}
+  .rev-row.bad{border-color:var(--bad)}
+  .rev-row.ok{border-color:var(--good)}
+  .rev-row input.fix{flex:1;min-width:90px;font-size:12px;padding:5px 8px}
   .reco-why{font-size:12px;color:var(--muted);margin-top:4px}
   .bar{height:7px;background:var(--panel2);border-radius:20px;overflow:hidden;margin-top:6px}
   .bar>span{display:block;height:100%;background:var(--good)}
@@ -169,15 +177,27 @@
 
 <!-- SCAN / OCR MODAL -->
 <div class="modal" id="scanModal">
-  <div class="sheet" style="max-width:620px">
-    <h3>📷 Scan a card</h3>
-    <div class="muted" id="scanHint">Take a photo of the card (or choose one). I'll read the name and search the Pokémon TCG for it. Fill the card's top name area for best results.</div>
-    <div class="row" style="margin-top:12px">
-      <input type="file" id="scanFile" accept="image/*" capture="environment" style="flex:3" />
+  <div class="sheet" style="max-width:680px">
+    <h3>📷 Scan cards</h3>
+    <div class="muted" id="scanHint">Pick one or many card photos — I'll read each name, match it on the Pokémon TCG, and auto-add the best match. You review the guesses before saving. (Pokémon names are the same in every language, so EN / ID / JP cards all match.)</div>
+    <div class="row" style="margin-top:12px;align-items:flex-end">
+      <div style="flex:3"><label>Card photo(s)</label>
+        <input type="file" id="scanFile" accept="image/*" multiple capture="environment" style="width:100%" /></div>
+      <div style="flex:2"><label>OCR language(s)</label>
+        <select id="scanLang">
+          <option value="eng">English only (fast)</option>
+          <option value="eng+ind">English + Indonesian</option>
+          <option value="eng+jpn">English + Japanese</option>
+          <option value="eng+ind+jpn" selected>English + Indonesian + Japanese</option>
+        </select></div>
     </div>
-    <div class="row"><img id="scanPreview" src="" alt="" style="max-width:160px;border-radius:10px;display:none"/></div>
     <div class="muted" id="scanStatus"></div>
-    <div class="results" id="scanResults"></div>
+    <div id="scanReview"></div>
+    <div class="row" id="scanBulk" style="margin-top:12px;display:none;align-items:flex-end">
+      <div style="flex:2"><label>File all matched into binder</label><select id="scanBulkBinder"></select></div>
+      <div style="flex:1"><label>Page (optional)</label><input id="scanBulkPage" type="number" min="1" placeholder="pg" /></div>
+      <button id="scanSaveAll" style="flex:1">Add all matched</button>
+    </div>
     <div class="row" style="margin-top:14px;justify-content:flex-end">
       <button class="ghost" id="closeScan" style="flex:0;min-width:90px">Close</button>
     </div>
@@ -447,46 +467,103 @@ async function renderReco(){
     :'<span class="muted">No strong suggestions yet — add more cards or complete more of a set.</span>';
 }
 
-/* ---------- OCR scan ---------- */
+/* ---------- OCR scan (batch, multi-language) ---------- */
+let scanItems=[]; // {name(guess), file, match(cardData|null), status}
 function cleanOcr(text){
-  // keep the longest plausible name-ish line (letters, 2+ chars)
-  const lines=text.split(/\n+/).map(l=>l.replace(/[^A-Za-z' .\-]/g,"").trim())
+  // strip words that are NOT the Pokémon name in EN/ID/JP cards
+  const noise=/\b(HP|PS|BASIC|DASAR|STAGE|TAHAP|STAGE1|STAGE2|EX|GX|VMAX|VSTAR|ABILITY|KEMAMPUAN|POKE?MON|POKEMON|WEAKNESS|KELEMAHAN|RESISTANCE|RETREAT|たね|ワザ|にげる)\b/gi;
+  const lines=text.split(/\n+/)
+    .map(l=>l.replace(noise," ").replace(/[^A-Za-z'’\u3040-\u30ff\u4e00-\u9faf .\-]/g," ").replace(/\s+/g," ").trim())
     .filter(l=>l.length>=3);
-  // prefer a line near the top with letters; fall back to longest
-  lines.sort((a,b)=>b.length-a.length);
-  return (lines[0]||"").replace(/\b(HP|BASIC|STAGE|STAGE1|STAGE2|EX|GX)\b/gi,"").trim();
+  // prefer the first longish line (card name sits near the top), else longest
+  const top=lines.slice(0,4).sort((a,b)=>b.length-a.length)[0];
+  const best=top||lines.sort((a,b)=>b.length-a.length)[0]||"";
+  // take the first 1-2 alphabetic words as the likely name
+  const words=best.split(" ").filter(w=>/[A-Za-z\u3040-\u30ff\u4e00-\u9faf]/.test(w));
+  return words.slice(0,2).join(" ").trim();
 }
-async function runScan(file){
+function cardData(c){const img=(c.images&&c.images.small)||"";
+  return {id:c.id,name:c.name,set:c.set.name,setId:c.set.id,number:c.number,
+    rarity:c.rarity||"",image:(c.images&&c.images.large)||img,price:priceOf(c)};}
+
+async function runBatchScan(files,lang){
   if(typeof Tesseract==="undefined"){
-    $("#scanStatus").textContent="OCR library didn't load — check your internet connection and reopen.";return;}
-  const url=URL.createObjectURL(file);
-  const pv=$("#scanPreview");pv.src=url;pv.style.display="block";
-  $("#scanResults").innerHTML="";
-  $("#scanStatus").innerHTML='Reading card <span class="spin"></span> (first scan downloads the OCR model, ~15s)';
-  try{
-    const {data}=await Tesseract.recognize(url,"eng");
-    const guess=cleanOcr(data.text||"");
-    if(!guess){$("#scanStatus").textContent="Couldn't read a name. Try a clearer, straight-on photo of the card's top.";return;}
-    $("#scanStatus").innerHTML=`Read: <b>${guess}</b> — searching the TCG <span class="spin"></span>`;
-    const results=await apiSearch(guess);
-    if(!results.length){
-      $("#scanStatus").innerHTML=`Read "<b>${guess}</b>" but no TCG match. <a href="#" id="scanManual" style="color:var(--accent2)">Search manually</a>`;
-      $("#scanManual").onclick=ev=>{ev.preventDefault();$("#scanModal").classList.remove("open");
-        $("#addModal").classList.add("open");$("#apiSearch").value=guess;doSearch();};
-      return;
-    }
-    $("#scanStatus").innerHTML=`Read "<b>${guess}</b>" — ${results.length} matches, pick the right one:`;
-    $("#scanResults").innerHTML=results.map(c=>{
-      const img=(c.images&&c.images.small)||"";
-      return `<div class="card" data-add='${encodeURIComponent(JSON.stringify({
-        id:c.id,name:c.name,set:c.set.name,setId:c.set.id,number:c.number,
-        rarity:c.rarity||"",image:(c.images&&c.images.large)||img,price:priceOf(c)}))}'>
-        <img loading="lazy" src="${img}" onerror="this.style.visibility='hidden'"/>
-        <div class="meta"><div class="nm">${c.name}</div>
-        <div class="sub">${c.set.name} · ${c.number}</div></div></div>`;
-    }).join("");
-  }catch(e){$("#scanStatus").textContent="Scan failed: "+e.message;}
-  finally{URL.revokeObjectURL(url);}
+    $("#scanStatus").textContent="OCR library didn't load — check your connection and reopen.";return;}
+  scanItems=[...files].map(f=>({file:f,name:"",match:null,status:"queued"}));
+  $("#scanBulk").style.display="none";
+  renderReview();
+  $("#scanStatus").innerHTML=`Reading ${scanItems.length} photo(s) <span class="spin"></span> — first run downloads the ${lang} model(s), can take ~30s.`;
+  let worker;
+  try{ worker=await Tesseract.createWorker(lang); }
+  catch(e){ $("#scanStatus").textContent="Couldn't load OCR language model: "+e.message; return; }
+  for(let i=0;i<scanItems.length;i++){
+    const it=scanItems[i];const url=URL.createObjectURL(it.file);
+    it.status="reading";renderReview();
+    try{
+      const {data}=await worker.recognize(url);
+      it.name=cleanOcr(data.text||"");
+      if(!it.name){it.status="noread";}
+      else{
+        const results=await apiSearch(it.name).catch(()=>[]);
+        if(results.length){it.match=cardData(results[0]);it.status="ok";}
+        else{it.status="nomatch";}
+      }
+    }catch(e){it.status="error";}
+    finally{URL.revokeObjectURL(url);}
+    renderReview();
+  }
+  await worker.terminate();
+  const ok=scanItems.filter(x=>x.status==="ok").length;
+  $("#scanStatus").innerHTML=`Done — <b>${ok}</b> of ${scanItems.length} matched. Fix any wrong ones below, then add them.`;
+  fillBinderSelect($("#scanBulkBinder"),"");
+  $("#scanBulk").style.display=ok?"flex":"none";
+}
+
+async function refixItem(i,typed){
+  const it=scanItems[i];it.name=typed;it.status="reading";renderReview();
+  const results=await apiSearch(typed).catch(()=>[]);
+  if(results.length){it.match=cardData(results[0]);it.status="ok";}
+  else{it.match=null;it.status="nomatch";}
+  renderReview();
+  const ok=scanItems.filter(x=>x.status==="ok").length;
+  $("#scanBulk").style.display=ok?"flex":"none";
+}
+
+function renderReview(){
+  const box=$("#scanReview");
+  box.innerHTML=scanItems.map((it,i)=>{
+    const cls=it.status==="ok"?"ok":(["nomatch","noread","error"].includes(it.status)?"bad":"");
+    const st={queued:"waiting…",reading:'reading… <span class="spin"></span>',
+      ok:"matched",nomatch:"no TCG match — type the name",noread:"couldn't read — type the name",
+      error:"OCR error — type the name"}[it.status]||it.status;
+    const img=it.match?it.match.image:"";
+    const title=it.match?it.match.name:(it.name||"?");
+    const sub=it.match?`${it.match.set} · ${it.match.number}`:"";
+    return `<div class="rev-row ${cls}">
+      <img src="${img}" onerror="this.style.visibility='hidden'"/>
+      <div style="flex:1">
+        <div class="nm">${title}</div>
+        <div class="st">${sub?sub+" · ":""}${st}</div>
+      </div>
+      <input class="fix" data-i="${i}" placeholder="correct name…" value="${it.status!=='ok'?(it.name||''):''}"/>
+    </div>`;
+  }).join("")||'<span class="muted">No photos yet.</span>';
+}
+
+function saveAllMatched(){
+  const binder=$("#scanBulkBinder").value||"";
+  const page=$("#scanBulkPage").value?parseInt($("#scanBulkPage").value):"";
+  let n=0;
+  scanItems.filter(x=>x.status==="ok"&&x.match).forEach(x=>{
+    const id=x.match.id;const ex=state.cards[id];
+    state.cards[id]={...x.match,
+      qty:ex?ex.qty+1:1,cond:ex?ex.cond:"NM",
+      binder:binder||(ex?ex.binder:""),page:page||(ex?ex.page:""),slot:ex?ex.slot:"",
+      added:ex?ex.added:Date.now()};
+    n++;
+  });
+  save();refreshAll();toast(`Added ${n} card(s)`);
+  $("#scanModal").classList.remove("open");
 }
 
 /* ---------- rename binders ---------- */
@@ -530,12 +607,14 @@ $$(".tab").forEach(t=>t.onclick=()=>{
 });
 $("#addBtn").onclick=()=>{$("#addModal").classList.add("open");$("#apiSearch").focus();};
 $("#scanBtn").onclick=()=>{$("#scanModal").classList.add("open");
-  $("#scanResults").innerHTML="";$("#scanStatus").textContent="";
-  $("#scanPreview").style.display="none";$("#scanFile").value="";};
+  scanItems=[];$("#scanReview").innerHTML="";$("#scanStatus").textContent="";
+  $("#scanBulk").style.display="none";$("#scanFile").value="";};
 $("#closeScan").onclick=()=>$("#scanModal").classList.remove("open");
-$("#scanFile").onchange=e=>e.target.files[0]&&runScan(e.target.files[0]);
-$("#scanResults").onclick=e=>{const el=e.target.closest("[data-add]");if(!el)return;
-  openDetail(JSON.parse(decodeURIComponent(el.dataset.add)),true);};
+$("#scanFile").onchange=e=>{if(e.target.files.length)runBatchScan(e.target.files,$("#scanLang").value);};
+$("#scanReview").addEventListener("change",e=>{
+  const inp=e.target.closest("input.fix");if(!inp)return;
+  const v=inp.value.trim();if(v)refixItem(parseInt(inp.dataset.i),v);});
+$("#scanSaveAll").onclick=saveAllMatched;
 $("#manageBinders").onclick=renameBinders;
 $("#closeAdd").onclick=()=>$("#addModal").classList.remove("open");
 $("#doSearch").onclick=doSearch;
