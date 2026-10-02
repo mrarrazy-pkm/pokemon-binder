@@ -228,6 +228,7 @@
       </div>
     </div>
     <div class="row" style="margin-top:14px;justify-content:space-between">
+      <button class="ghost" id="dBack" style="flex:0;min-width:120px">← Back</button>
       <button class="danger" id="dRemove" style="flex:0;min-width:120px">Remove card</button>
       <button id="dSave" style="flex:0;min-width:120px">Save</button>
     </div>
@@ -329,9 +330,19 @@ function refreshAll(){renderStats();fillFilters();renderBinder();}
 
 /* ---------- add / search API ---------- */
 async function apiSearch(name){
-  const r=await fetch(`${API}/cards?q=name:"${encodeURIComponent(name)}*"&pageSize=24&orderBy=-set.releaseDate`);
-  if(!r.ok)throw new Error("API "+r.status);
-  return (await r.json()).data||[];
+  // retry on transient 5xx / network errors — the TCG API 500s intermittently
+  const u=`${API}/cards?q=name:"${encodeURIComponent(name)}*"&pageSize=24&orderBy=-set.releaseDate`;
+  let lastErr;
+  for(let attempt=0;attempt<4;attempt++){
+    if(attempt)await new Promise(r=>setTimeout(r,400*attempt)); // 0, 400, 800, 1200ms
+    try{
+      const r=await fetch(u);
+      if(r.ok)return (await r.json()).data||[];
+      if(r.status>=500||r.status===429){lastErr=new Error("API "+r.status);continue;}
+      throw new Error("API "+r.status); // 4xx won't fix itself
+    }catch(e){lastErr=e;}
+  }
+  throw lastErr||new Error("API request failed");
 }
 async function doSearch(){
   const name=$("#apiSearch").value.trim();if(!name)return;
@@ -348,12 +359,20 @@ async function doSearch(){
         <div class="meta"><div class="nm">${c.name}</div>
         <div class="sub">${c.set.name} · ${c.number}</div></div></div>`;
     }).join("");
-  }catch(e){$("#searchHint").textContent="Search failed: "+e.message;}
+  }catch(e){
+    $("#searchHint").innerHTML=`The Pokémon TCG server hiccuped (${e.message}). `+
+      `<a href="#" id="searchRetry" style="color:var(--accent2)">Try again</a>`;
+    const rt=$("#searchRetry");if(rt)rt.onclick=ev=>{ev.preventDefault();doSearch();};
+  }
 }
 
 /* ---------- detail / edit ---------- */
 function openDetail(data,isNew){
   pendingAdd=isNew?data:null;
+  // remember where we came from so Back can return there
+  openDetail._from = isNew ? ($("#addModal").classList.contains("open")?"add":
+                      ($("#scanModal").classList.contains("open")?"scan":"")) : "";
+  $("#dBack").style.display = openDetail._from ? "block" : "none";
   $("#dTitle").textContent=data.name;
   $("#dImg").src=data.image||"";
   $("#dSet").textContent=data.set;$("#dNum").textContent=data.number||"—";
@@ -624,6 +643,12 @@ $("#apiResults").onclick=e=>{const el=e.target.closest("[data-add]");if(!el)retu
 $("#binderGrid").onclick=e=>{const el=e.target.closest("[data-id]");if(!el)return;
   openDetail(state.cards[el.dataset.id],false);};
 $("#dSave").onclick=saveDetail;
+$("#dBack").onclick=()=>{
+  // close detail without saving; the add/scan modal is still open underneath
+  $("#detailModal").classList.remove("open");
+  if(openDetail._from==="add"){$("#addModal").classList.add("open");$("#apiSearch").focus();}
+  else if(openDetail._from==="scan"){$("#scanModal").classList.add("open");}
+};
 $("#dRemove").onclick=()=>{const d=$("#dSave")._data;delete state.cards[d.id];save();refreshAll();
   $("#detailModal").classList.remove("open");toast("Removed");};
 ["#search","#filterSet","#filterRarity","#filterBinder","#sortBy"].forEach(s=>{
