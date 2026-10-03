@@ -169,11 +169,11 @@
       <button id="doSearch" style="flex:1">Search</button>
     </div>
     <div class="row">
-      <input id="apiSet" list="setOptions" placeholder="Set (optional) — e.g. Base, Obsidian Flames…" style="flex:3" />
+      <input id="apiSet" list="setOptions" placeholder="Set or code (optional) — e.g. Obsidian Flames, OBF, sv3…" style="flex:3" />
       <datalist id="setOptions"></datalist>
       <button class="ghost" id="clearSet" style="flex:1">Clear set</button>
     </div>
-    <div class="muted" id="searchHint">Type a card name (optionally pick a set to narrow it) and hit Search. Click a result to add it to your binder.</div>
+    <div class="muted" id="searchHint">Type a card name and/or a set — you can use the set name OR the code printed on the card (e.g. <b>OBF</b>, <b>PAL</b>, <b>151</b>). Hit Search, then click a result to add it.</div>
     <div class="results" id="apiResults"></div>
     <div class="row" style="margin-top:14px;justify-content:flex-end">
       <button class="ghost" id="closeAdd" style="flex:0;min-width:90px">Close</button>
@@ -279,17 +279,26 @@ async function fetchRate(){
 async function loadSetOptions(){
   if($("#setOptions").children.length)return; // already filled this session
   // use cache if present
-  let names=[];
-  try{names=JSON.parse(localStorage.getItem("pkbinder.sets")||"[]");}catch(e){}
-  if(!names.length){
+  let sets=[];
+  try{sets=JSON.parse(localStorage.getItem("pkbinder.sets")||"[]");}catch(e){}
+  // migrate old cache (array of plain name strings) → re-fetch for codes
+  if(sets.length&&typeof sets[0]==="string")sets=[];
+  if(!sets.length){
     try{
-      const r=await fetch(`${API}/sets?pageSize=250&orderBy=-releaseDate&select=name`);
+      const r=await fetch(`${API}/sets?pageSize=250&orderBy=-releaseDate&select=id,name,ptcgoCode`);
       const j=await r.json();
-      names=[...new Set((j.data||[]).map(s=>s.name))];
-      if(names.length)localStorage.setItem("pkbinder.sets",JSON.stringify(names));
+      sets=(j.data||[]).map(s=>({id:s.id,name:s.name,code:s.ptcgoCode||""}));
+      if(sets.length)localStorage.setItem("pkbinder.sets",JSON.stringify(sets));
     }catch(e){return;}
   }
-  $("#setOptions").innerHTML=names.map(n=>`<option value="${n.replace(/"/g,'&quot;')}">`).join("");
+  // show both name and code so the user can type either; label clarifies the code
+  const opts=[];
+  for(const s of sets){
+    const label=s.code?`${s.name} (${s.code})`:s.name;
+    opts.push(`<option value="${s.name.replace(/"/g,'&quot;')}">${label.replace(/"/g,'&quot;')}</option>`);
+    if(s.code)opts.push(`<option value="${s.code.replace(/"/g,'&quot;')}">${s.name.replace(/"/g,'&quot;')} — code</option>`);
+  }
+  $("#setOptions").innerHTML=opts.join("");
 }
 function money(n){
   if(n==null)return "—";
@@ -376,7 +385,18 @@ async function apiSearch(name,setName){
   // retry on transient 5xx / network errors — the TCG API 500s intermittently
   const parts=[];
   if(name&&name.trim())parts.push(`name:"${name.trim()}*"`);
-  if(setName&&setName.trim())parts.push(`set.name:"${setName.trim()}*"`);
+  if(setName&&setName.trim()){
+    const s=setName.trim();
+    // A set CODE (printed on the card) is short & compact with no spaces, e.g. OBF, PAL, 151, sv3, swsh4.
+    // A set NAME has spaces or is long, e.g. "Obsidian Flames", "Scarlet & Violet".
+    const looksLikeCode = /^[A-Za-z0-9]{1,6}$/.test(s) && !/\s/.test(s);
+    if(looksLikeCode){
+      // match either the API set id (sv3, base1…) or the PTCGO code (OBF, PAL…) printed on cards
+      parts.push(`(set.id:"${s.toLowerCase()}" OR set.ptcgoCode:"${s.toUpperCase()}")`);
+    }else{
+      parts.push(`set.name:"${s}*"`);
+    }
+  }
   if(!parts.length)return [];
   const u=`${API}/cards?q=${encodeURIComponent(parts.join(" "))}&pageSize=48&orderBy=-set.releaseDate`;
   let lastErr;
@@ -406,7 +426,7 @@ async function doSearch(){
         rarity:c.rarity||"",image:(c.images&&c.images.large)||img,price:priceOf(c)}))}'>
         <img loading="lazy" src="${img}" onerror="this.style.visibility='hidden'"/>
         <div class="meta"><div class="nm">${c.name}</div>
-        <div class="sub">${c.set.name} · ${c.number}</div></div></div>`;
+        <div class="sub">${c.set.name}${c.set.ptcgoCode?" ("+c.set.ptcgoCode+")":""} · ${c.number}</div></div></div>`;
     }).join("");
   }catch(e){
     $("#searchHint").innerHTML=`The Pokémon TCG server hiccuped (${e.message}). `+
