@@ -132,7 +132,7 @@
         <option value="number">Sort: card number</option>
         <option value="binder">Sort: binder &amp; page</option>
       </select>
-      <button class="ghost" id="manageBinders">Rename binders</button>
+      <button class="ghost" id="manageBinders">Manage binders</button>
     </div>
     <div class="grid" id="binderGrid"></div>
     <div class="empty" id="binderEmpty" style="display:none">
@@ -241,23 +241,50 @@
   </div>
 </div>
 
+<!-- BINDER MANAGER MODAL -->
+<div class="modal" id="binderModal">
+  <div class="sheet" style="max-width:560px">
+    <h3>📒 Manage binders</h3>
+    <div class="muted">Add, rename, delete, and set each binder's page size. Cards keep their place when you rename; deleting a binder only unfiles its cards (they are not removed).</div>
+    <div id="binderList" style="margin-top:12px"></div>
+    <div class="row" style="margin-top:10px">
+      <button class="ghost" id="addBinder" style="flex:0;min-width:140px">+ Add binder</button>
+    </div>
+    <div class="row" style="margin-top:14px;justify-content:flex-end">
+      <button class="ghost" id="closeBinderMgr" style="flex:0;min-width:90px">Close</button>
+    </div>
+  </div>
+</div>
+
 <div class="toast" id="toast"></div>
 
 <script>
 const API="https://api.pokemontcg.io/v2";
 const LS="pkbinder.v1";
 // card -> {id,name,set,setId,number,rarity,image,price,qty,cond,added, binder,page,slot}
-let state={cards:{},binders:["Binder 1","Binder 2","Binder 3","Binder 4"]};
+// binder -> {name, cols, rows}  (cards reference a binder by its NAME string in c.binder)
+const DEFAULT_BINDERS=[["Binder 1",3,3],["Binder 2",3,3],["Binder 3",3,3],["Binder 4",3,3]]
+  .map(([name,cols,rows])=>({name,cols,rows}));
+let state={cards:{},binders:DEFAULT_BINDERS.map(b=>({...b}))};
 let pendingAdd=null;             // card being added from search
 const $=s=>document.querySelector(s);
 const $$=s=>[...document.querySelectorAll(s)];
+
+function migrateBinders(arr){
+  // accept legacy ["Binder 1", ...] strings OR new [{name,cols,rows}] objects
+  if(!Array.isArray(arr)||!arr.length)return DEFAULT_BINDERS.map(b=>({...b}));
+  return arr.map(b=>typeof b==="string"
+    ? {name:b,cols:3,rows:3}
+    : {name:String(b.name||"Binder"),cols:+b.cols||3,rows:+b.rows||3});
+}
+function binderNames(){return state.binders.map(b=>b.name);}
+function binderByName(n){return state.binders.find(b=>b.name===n);}
 
 function load(){try{
   state=JSON.parse(localStorage.getItem(LS))||{};
 }catch(e){state={}}
   if(!state.cards)state.cards={};
-  if(!Array.isArray(state.binders)||!state.binders.length)
-    state.binders=["Binder 1","Binder 2","Binder 3","Binder 4"];
+  state.binders=migrateBinders(state.binders);
 }
 function save(){localStorage.setItem(LS,JSON.stringify(state))}
 function toast(m){const t=$("#toast");t.textContent=m;t.classList.add("show");
@@ -341,11 +368,11 @@ function fillFilters(){
   const rar=[...new Set(a.map(c=>c.rarity).filter(Boolean))].sort();
   $("#filterSet").innerHTML='<option value="">All sets</option>'+sets.map(s=>`<option>${s}</option>`).join("");
   $("#filterRarity").innerHTML='<option value="">All rarities</option>'+rar.map(s=>`<option>${s}</option>`).join("");
-  $("#filterBinder").innerHTML='<option value="">All binders</option>'+state.binders.map(b=>`<option>${b}</option>`).join("");
+  $("#filterBinder").innerHTML='<option value="">All binders</option>'+binderNames().map(b=>`<option>${b}</option>`).join("");
 }
 function fillBinderSelect(sel,current){
   sel.innerHTML='<option value="">— not filed —</option>'+
-    state.binders.map(b=>`<option${b===current?" selected":""}>${b}</option>`).join("");
+    binderNames().map(b=>`<option${b===current?" selected":""}>${b}</option>`).join("");
 }
 function renderBinder(){
   let a=cardsArr();
@@ -365,6 +392,10 @@ function renderBinder(){
     return (y.added||0)-(x.added||0);
   });
   const g=$("#binderGrid");
+  // when viewing ONE binder, lay the grid out in that binder's page width (2×2, 3×3, …)
+  const bb=fb?binderByName(fb):null;
+  if(bb){ g.style.gridTemplateColumns=`repeat(${bb.cols}, minmax(0,1fr))`; }
+  else{ g.style.gridTemplateColumns=""; } // back to the responsive auto-fill
   g.innerHTML=a.map(c=>{
     const loc=locLabel(c);
     return `
@@ -679,20 +710,45 @@ function saveAllMatched(){
   $("#scanModal").classList.remove("open");
 }
 
-/* ---------- rename binders ---------- */
-function renameBinders(){
-  const next=[];
-  for(let i=0;i<state.binders.length;i++){
-    const v=prompt("Name for binder "+(i+1)+":",state.binders[i]);
-    if(v===null)return; // cancelled
-    next.push(v.trim()||state.binders[i]);
-  }
-  const old=state.binders;
-  // remap any cards filed under an old name
-  Object.values(state.cards).forEach(c=>{
-    const idx=old.indexOf(c.binder);if(idx>=0)c.binder=next[idx];
-  });
-  state.binders=next;save();refreshAll();toast("Binders renamed");
+/* ---------- binder manager (add / delete / rename / size) ---------- */
+const SIZES=[[2,2],[3,3],[3,4],[4,4],[4,3]]; // cols x rows options
+function openBinderMgr(){ renderBinderMgr(); $("#binderModal").classList.add("open"); }
+function renderBinderMgr(){
+  const box=$("#binderList");
+  box.innerHTML=state.binders.map((b,i)=>{
+    const count=cardsArr().filter(c=>c.binder===b.name).length;
+    const sizeOpts=SIZES.map(([c,r])=>`<option value="${c}x${r}"${b.cols===c&&b.rows===r?" selected":""}>${c}×${r}</option>`).join("");
+    return `<div class="rev-row" style="align-items:center">
+      <input class="bName" data-i="${i}" value="${(b.name||'').replace(/"/g,'&quot;')}" style="flex:2" placeholder="Binder name"/>
+      <select class="bSize" data-i="${i}" style="flex:1">${sizeOpts}</select>
+      <span class="muted" style="flex:0;min-width:70px;text-align:right">${count} card${count===1?'':'s'}</span>
+      <button class="danger bDel" data-i="${i}" style="flex:0;min-width:40px" title="Delete binder">✕</button>
+    </div>`;
+  }).join("")||'<span class="muted">No binders yet — add one.</span>';
+}
+function applyBinderName(i,val){
+  const b=state.binders[i]; if(!b)return;
+  const name=(val||"").trim(); if(!name||name===b.name){renderBinderMgr();return;}
+  if(binderNames().some((n,j)=>j!==i&&n===name)){toast("A binder with that name already exists");renderBinderMgr();return;}
+  const old=b.name;
+  Object.values(state.cards).forEach(c=>{if(c.binder===old)c.binder=name;}); // keep cards filed
+  b.name=name; save(); refreshAll(); renderBinderMgr(); toast("Renamed");
+}
+function applyBinderSize(i,val){
+  const b=state.binders[i]; if(!b)return;
+  const [c,r]=val.split("x").map(Number); b.cols=c; b.rows=r; save(); refreshAll(); toast("Size set to "+c+"×"+r);
+}
+function addBinder(){
+  let n=state.binders.length+1, name="Binder "+n;
+  while(binderNames().includes(name)){n++;name="Binder "+n;}
+  state.binders.push({name,cols:3,rows:3}); save(); refreshAll(); renderBinderMgr(); toast("Binder added");
+}
+function deleteBinder(i){
+  const b=state.binders[i]; if(!b)return;
+  const count=cardsArr().filter(c=>c.binder===b.name).length;
+  if(!confirm(`Delete "${b.name}"?`+(count?` ${count} card(s) will be unfiled (not deleted).`:"")))return;
+  Object.values(state.cards).forEach(c=>{if(c.binder===b.name){c.binder="";c.page="";c.slot="";}});
+  state.binders.splice(i,1); save(); refreshAll(); renderBinderMgr(); toast("Binder deleted");
 }
 
 /* ---------- import / export ---------- */
@@ -705,7 +761,7 @@ function exportData(){
 function importData(file){
   const r=new FileReader();r.onload=()=>{try{
     const d=JSON.parse(r.result);if(d&&d.cards){
-      state={cards:d.cards,binders:(Array.isArray(d.binders)&&d.binders.length)?d.binders:state.binders};
+      state={cards:d.cards,binders:migrateBinders(d.binders)};
       save();refreshAll();toast("Imported "+Object.keys(d.cards).length+" cards");}
     else toast("Not a valid backup");
   }catch(e){toast("Import failed")}};r.readAsText(file);
@@ -728,7 +784,14 @@ $("#scanReview").addEventListener("change",e=>{
   const inp=e.target.closest("input.fix");if(!inp)return;
   const v=inp.value.trim();if(v)refixItem(parseInt(inp.dataset.i),v);});
 $("#scanSaveAll").onclick=saveAllMatched;
-$("#manageBinders").onclick=renameBinders;
+$("#manageBinders").onclick=openBinderMgr;
+$("#closeBinderMgr").onclick=()=>$("#binderModal").classList.remove("open");
+$("#addBinder").onclick=addBinder;
+$("#binderList").onclick=e=>{const d=e.target.closest(".bDel");if(d)deleteBinder(+d.dataset.i);};
+$("#binderList").onchange=e=>{
+  if(e.target.classList.contains("bName"))applyBinderName(+e.target.dataset.i,e.target.value);
+  else if(e.target.classList.contains("bSize"))applyBinderSize(+e.target.dataset.i,e.target.value);
+};
 $("#closeAdd").onclick=()=>$("#addModal").classList.remove("open");
 $("#doSearch").onclick=doSearch;
 $("#apiSearch").onkeydown=e=>{if(e.key==="Enter")doSearch();};
