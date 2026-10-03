@@ -111,6 +111,7 @@
   <button id="addBtn">+ Add card</button>
   <button class="ghost" id="exportBtn">Export</button>
   <button class="ghost" id="importBtn">Import</button>
+  <button class="ghost" id="mergeBtn" title="Add imported cards to your collection instead of replacing">Merge import</button>
   <button class="ghost" id="curBtn" title="Toggle USD / IDR">$ USD</button>
   <input type="file" id="importFile" accept="application/json" style="display:none" />
 </header>
@@ -803,12 +804,29 @@ function exportData(){
   a.href=u;a.download="pokemon-binder-"+new Date().toISOString().slice(0,10)+".json";a.click();
   URL.revokeObjectURL(u);toast("Exported");
 }
-function importData(file){
+function importData(file,merge){
   const r=new FileReader();r.onload=()=>{try{
-    const d=JSON.parse(r.result);if(d&&d.cards){
+    const d=JSON.parse(r.result);
+    if(!d||!d.cards){toast("Not a valid backup");return;}
+    if(!merge){
       state={cards:d.cards,binders:migrateBinders(d.binders)};
-      save();refreshAll();toast("Imported "+Object.keys(d.cards).length+" cards");}
-    else toast("Not a valid backup");
+      save();refreshAll();toast("Imported "+Object.keys(d.cards).length+" cards");
+      return;
+    }
+    // MERGE: add imported cards to the current collection
+    let added=0, bumped=0;
+    for(const [id,inc] of Object.entries(d.cards)){
+      const ex=state.cards[id];
+      if(ex){ ex.qty=(ex.qty||1)+(inc.qty||1); bumped++; }       // same card → sum qty
+      else{ state.cards[id]={...inc,added:inc.added||Date.now()}; added++; }
+    }
+    // union any binders referenced by the import so filed cards still resolve
+    const have=new Set(binderNames());
+    migrateBinders(d.binders).forEach(b=>{ if(!have.has(b.name)){state.binders.push(b);have.add(b.name);} });
+    // also auto-create binders named by imported cards that we don't have yet
+    Object.values(d.cards).forEach(c=>{ if(c.binder&&!have.has(c.binder)){state.binders.push({name:c.binder,cols:3,rows:3});have.add(c.binder);} });
+    save();refreshAll();
+    toast(`Merged — ${added} new, ${bumped} quantity-bumped`);
   }catch(e){toast("Import failed")}};r.readAsText(file);
 }
 
@@ -870,8 +888,15 @@ $("#curBtn").onclick=()=>{
   updateCurBtn();refreshAll();
   if(currency==="IDR")toast("Rate: $1 ≈ Rp"+Math.round(usdToIdr).toLocaleString("id-ID"));
 };
-$("#importBtn").onclick=()=>$("#importFile").click();
-$("#importFile").onchange=e=>e.target.files[0]&&importData(e.target.files[0]);
+$("#importBtn").onclick=()=>{
+  if(cardsArr().length && !confirm("Import REPLACES your current collection with the file. Use 'Merge import' to add instead. Continue with replace?"))return;
+  $("#importFile")._merge=false; $("#importFile").click();
+};
+$("#mergeBtn").onclick=()=>{ $("#importFile")._merge=true; $("#importFile").click(); };
+$("#importFile").onchange=e=>{
+  if(e.target.files[0])importData(e.target.files[0], !!$("#importFile")._merge);
+  e.target.value=""; // allow re-importing the same file
+};
 $$(".modal").forEach(m=>m.onclick=e=>{if(e.target===m)m.classList.remove("open")});
 
 load();updateCurBtn();refreshAll();fetchRate();
