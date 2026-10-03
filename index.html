@@ -233,6 +233,10 @@
         </div>
       </div>
     </div>
+    <div id="dArtistBox" style="margin-top:14px;display:none">
+      <label id="dArtistTitle" style="display:block;margin-bottom:6px"></label>
+      <div class="results" id="dArtist" style="max-height:230px;overflow:auto"></div>
+    </div>
     <div class="row" style="margin-top:14px;justify-content:space-between">
       <button class="ghost" id="dBack" style="flex:0;min-width:120px">← Back</button>
       <button class="danger" id="dRemove" style="flex:0;min-width:120px">Remove card</button>
@@ -456,7 +460,7 @@ async function doSearch(){
       const img=(c.images&&c.images.small)||"";
       return `<div class="card" data-add='${encodeURIComponent(JSON.stringify({
         id:c.id,name:c.name,set:c.set.name,setId:c.set.id,number:c.number,
-        rarity:c.rarity||"",image:(c.images&&c.images.large)||img,price:priceOf(c)}))}'>
+        rarity:c.rarity||"",image:(c.images&&c.images.large)||img,price:priceOf(c),artist:c.artist||""}))}'>
         <img loading="lazy" src="${img}" onerror="this.style.visibility='hidden'"/>
         <div class="meta"><div class="nm">${c.name}</div>
         <div class="sub">${c.set.name}${c.set.ptcgoCode?" ("+c.set.ptcgoCode+")":""} · ${c.number}</div></div></div>`;
@@ -488,6 +492,47 @@ function openDetail(data,isNew){
   $("#dRemove").style.display=existing?"block":"none";
   $("#detailModal").classList.add("open");
   $("#dSave")._data=data;
+  loadArtistSuggestions(data);
+}
+let artistReq=0;
+async function loadArtistSuggestions(data){
+  const box=$("#dArtistBox"), list=$("#dArtist"), title=$("#dArtistTitle");
+  const artist=data.artist&&data.artist.trim();
+  if(!artist){ box.style.display="none"; return; }
+  const my=++artistReq; // guard against a stale fetch landing after a newer open
+  box.style.display="block";
+  title.innerHTML=`🎨 More by <b>${artist}</b>`;
+  list.innerHTML='<span class="muted">Finding cards by this artist… <span class="spin"></span></span>';
+  let cards=[];
+  try{ cards=await apiByArtist(artist); }catch(e){
+    if(my!==artistReq)return;
+    list.innerHTML=`<span class="muted">Couldn't load (${e.message}). The TCG API may be busy — reopen to retry.</span>`; return;
+  }
+  if(my!==artistReq)return; // a newer card was opened; drop this result
+  cards=cards.filter(c=>c.id!==data.id); // exclude the card you're looking at
+  if(!cards.length){ list.innerHTML='<span class="muted">No other cards found for this artist.</span>'; return; }
+  list.innerHTML=cards.slice(0,24).map(c=>{
+    const img=(c.images&&c.images.small)||"";
+    const owned=state.cards[c.id]?' ✓':'';
+    return `<div class="card" data-add='${encodeURIComponent(JSON.stringify(cardData(c)))}'>
+      <img loading="lazy" src="${img}" onerror="this.style.visibility='hidden'"/>
+      <div class="meta"><div class="nm">${c.name}${owned}</div>
+      <div class="sub">${c.set.name} · ${c.number}</div></div></div>`;
+  }).join("");
+}
+async function apiByArtist(artist){
+  const u=`${API}/cards?q=${encodeURIComponent(`artist:"${artist}"`)}&pageSize=24&orderBy=-set.releaseDate`;
+  let lastErr;
+  for(let attempt=0;attempt<4;attempt++){
+    if(attempt)await new Promise(r=>setTimeout(r,400*attempt));
+    try{
+      const r=await fetch(u);
+      if(r.ok)return (await r.json()).data||[];
+      if(r.status>=500||r.status===429){lastErr=new Error("API "+r.status);continue;}
+      throw new Error("API "+r.status);
+    }catch(e){lastErr=e;}
+  }
+  throw lastErr||new Error("API request failed");
 }
 function saveDetail(){
   const data=$("#dSave")._data;const qty=Math.max(0,parseInt($("#dQty").value)||0);
@@ -616,7 +661,7 @@ function cleanOcr(text){
 }
 function cardData(c){const img=(c.images&&c.images.small)||"";
   return {id:c.id,name:c.name,set:c.set.name,setId:c.set.id,number:c.number,
-    rarity:c.rarity||"",image:(c.images&&c.images.large)||img,price:priceOf(c)};}
+    rarity:c.rarity||"",image:(c.images&&c.images.large)||img,price:priceOf(c),artist:c.artist||""};}
 
 async function runBatchScan(files,lang){
   if(typeof Tesseract==="undefined"){
@@ -798,6 +843,9 @@ $("#apiSearch").onkeydown=e=>{if(e.key==="Enter")doSearch();};
 $("#apiSet").onkeydown=e=>{if(e.key==="Enter")doSearch();};
 $("#clearSet").onclick=()=>{$("#apiSet").value="";$("#apiSearch").focus();};
 $("#apiResults").onclick=e=>{const el=e.target.closest("[data-add]");if(!el)return;
+  openDetail(JSON.parse(decodeURIComponent(el.dataset.add)),true);};
+$("#dArtist").onclick=e=>{const el=e.target.closest("[data-add]");if(!el)return;
+  // open the suggested card as a new addable card (keeps the add/scan origin for Back)
   openDetail(JSON.parse(decodeURIComponent(el.dataset.add)),true);};
 $("#binderGrid").onclick=e=>{const el=e.target.closest("[data-id]");if(!el)return;
   openDetail(state.cards[el.dataset.id],false);};
