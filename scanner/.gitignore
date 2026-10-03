@@ -1,0 +1,10 @@
+# Python / OCR scanner artifacts — not source
+__pycache__/
+*.pyc
+.venv/
+venv/
+debug/
+
+# generated output (your scan results) — don't commit personal collections
+scanned.json
+*.scanned.json
